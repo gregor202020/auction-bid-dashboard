@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Auction Bid Aggregator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== HEADER ===== -->
+  <header id="header">
+    <div id="header-title">LIVE AUCTION <span>BID TRACKER</span></div>
+    <div id="live-badge">
+      <span class="dot"></span>
+      LIVE
+    </div>
+    <div id="total-bids-count">0 bids</div>
+    <div id="header-controls">
+      <button class="ctrl-btn new-auction" id="btn-new-auction" title="Clear all bids and start a new auction item">New Auction</button>
+      <button class="ctrl-btn overlay-btn" id="btn-overlay" title="Open compact bid overlay for screen sharing">Bid Overlay</button>
+      <button class="ctrl-btn comments-btn" id="btn-comments" title="Toggle comment stream">Comments</button>
+      <button class="ctrl-btn settings" id="btn-settings" title="Connection & filter settings">Settings</button>
+      <button class="ctrl-btn pause" id="btn-pause">Pause</button>
+      <button class="ctrl-btn reset" id="btn-reset">Reset</button>
+    </div>
+  </header>
+
+  <!-- ===== CONNECTION PANEL (collapsible) ===== -->
+  <div id="connection-panel" class="panel-collapsed">
+    <div id="connection-panel-inner">
+
+      <!-- Platform connections -->
+      <div id="platform-connections">
+        <div class="conn-group">
+          <label class="conn-label"><span class="conn-dot" id="conn-dot-yt"></span> YouTube</label>
+          <input type="text" class="conn-input" id="input-yt" placeholder="Paste YouTube live URL or video ID" />
+          <div class="conn-hint">e.g. https://youtube.com/watch?v=ABC123 or just ABC123</div>
+          <button class="conn-btn" id="btn-connect-yt">Connect</button>
+        </div>
+        <div class="conn-group">
+          <label class="conn-label"><span class="conn-dot" id="conn-dot-fb"></span> Facebook</label>
+          <input type="text" class="conn-input" id="input-fb" placeholder="Paste Facebook live video URL or video ID" />
+          <div class="conn-hint">e.g. https://facebook.com/ThirdWaveBBQ/videos/123456 or just 123456</div>
+          <button class="conn-btn" id="btn-connect-fb">Connect</button>
+        </div>
+        <div class="conn-group">
+          <label class="conn-label"><span class="conn-dot" id="conn-dot-ig"></span> Instagram</label>
+          <input type="text" class="conn-input" id="input-ig" placeholder="@username or Instagram media ID" />
+          <div class="conn-hint">e.g. @thirdwavebbq or paste the post/live URL</div>
+          <button class="conn-btn" id="btn-connect-ig">Connect</button>
+        </div>
+        <div class="conn-group">
+          <label class="conn-label"><span class="conn-dot" id="conn-dot-tt"></span> TikTok</label>
+          <input type="text" class="conn-input" id="input-tt" placeholder="TikTok username (without @)" />
+          <div class="conn-hint">e.g. thirdwavebbq — must be live streaming</div>
+          <button class="conn-btn" id="btn-connect-tt">Connect</button>
+        </div>
+      </div>
+
+      <!-- Filter settings -->
+      <div id="filter-settings">
+        <div class="filter-group">
+          <label>Min Bid $</label>
+          <input type="number" class="filter-input" id="filter-min" value="1" min="0" step="1" />
+        </div>
+        <div class="filter-group">
+          <label>Max Bid $</label>
+          <input type="number" class="filter-input" id="filter-max" value="999999" min="1" step="100" />
+        </div>
+        <div class="filter-group">
+          <label>Jump Cap ×</label>
+          <input type="number" class="filter-input" id="filter-jump" value="50" min="2" step="1" />
+        </div>
+        <button class="conn-btn" id="btn-apply-filter">Apply Filters</button>
+      </div>
+
+      <!-- Blocked users -->
+      <div id="blocked-users-section">
+        <div id="blocked-users-label">Blocked Users <span id="blocked-count">(0)</span></div>
+        <div id="blocked-users-list"></div>
+      </div>
+
+      <!-- Facebook Login (for username scraping) -->
+      <div id="fb-login-section">
+        <label class="conn-label">Facebook Login</label>
+        <div id="fb-login-status" class="conn-hint">Checking...</div>
+        <button class="conn-btn fb-login-btn" id="btn-fb-login">Login to Facebook</button>
+      </div>
+
+      <!-- Demo mode toggle -->
+      <div id="demo-toggle">
+        <label class="conn-label">Demo Mode</label>
+        <button class="conn-btn demo" id="btn-demo">Start Demo</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== MAIN ===== -->
+  <div id="main">
+
+    <!-- LEFT PANEL: Hero + Next Bids + Feed -->
+    <div id="left-panel">
+
+      <!-- Hero: current highest bid -->
+      <section id="hero-section">
+        <div id="hero-label">CURRENT HIGHEST BID</div>
+        <div id="hero-amount">—</div>
+        <div id="hero-meta">
+          <span id="hero-username" style="color:var(--text-muted)">Waiting for bids...</span>
+          <span id="hero-platform-badge"></span>
+          <span id="hero-time"></span>
+        </div>
+      </section>
+
+      <!-- Next 3 highest bids (2nd, 3rd, 4th) -->
+      <section id="next-bids-section">
+        <div id="next-bids-label">NEXT HIGHEST BIDS</div>
+        <div id="next-bids-list">
+          <div class="empty-state">Waiting for bids...</div>
+        </div>
+      </section>
+
+      <!-- Live feed -->
+      <section id="feed-section">
+        <div id="feed-header">
+          <span id="feed-title">LIVE BID FEED</span>
+        </div>
+        <div id="feed-list">
+          <div class="empty-state">Bids will appear here...</div>
+        </div>
+      </section>
+
+      <!-- Comment stream (toggleable) -->
+      <section id="comment-stream-section" class="stream-hidden">
+        <div id="comment-stream-header">
+          <span id="comment-stream-title">COMMENT STREAM</span>
+          <span id="comment-stream-count">0</span>
+        </div>
+        <div id="comment-stream-list">
+          <div class="empty-state">Comments will appear here...</div>
+        </div>
+      </section>
+
+    </div><!-- /left-panel -->
+
+    <!-- RIGHT PANEL: Leaderboard -->
+    <div id="right-panel">
+      <div id="leaderboard-header">
+        <span id="leaderboard-title">TOP BIDS LEADERBOARD</span>
+      </div>
+      <div id="leaderboard-list">
+        <div class="empty-state">Leaderboard will populate...</div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+
+  <!-- PLATFORM STATUS BAR -->
+  <footer id="status-bar">
+    <!-- Populated by JS -->
+  </footer>
+
+</div><!-- /app -->
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Confirmation dialog -->
+<div id="confirm-overlay" class="hidden">
+  <div id="confirm-dialog">
+    <div id="confirm-message"></div>
+    <div id="confirm-buttons">
+      <button class="ctrl-btn" id="confirm-yes">Yes, Start New</button>
+      <button class="ctrl-btn" id="confirm-no">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

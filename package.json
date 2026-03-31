@@ -1,0 +1,18 @@
+{
+  "name": "auction-bid-dashboard",
+  "version": "1.0.0",
+  "description": "Live auction bid aggregator — aggregates bids from YouTube, Facebook, Instagram, and TikTok live streams",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "puppeteer": "^24.40.0",
+    "tiktok-live-connector": "^2.1.1-beta1",
+    "ws": "^8.18.0"
+  }
+}
