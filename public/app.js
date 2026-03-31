@@ -28,6 +28,8 @@ const PLATFORMS = [
 const PLATFORM_MAP = {};
 for (const p of PLATFORMS) PLATFORM_MAP[p.id] = p;
 
+const COMMENT_BID_HINT_RE = /\d|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/i;
+
 /**
  * Extract platform-specific ID from a full URL.
  * Users can paste full URLs instead of hunting for video IDs.
@@ -101,6 +103,41 @@ function formatCurrency(amount) {
 function formatTime(ts) {
   const d = new Date(ts);
   return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+function getPlatformObject(platform) {
+  if (typeof platform === 'object' && platform) return platform;
+  return PLATFORM_MAP[platform] || {
+    id: platform || 'unknown',
+    name: platform || 'Unknown',
+    shortName: String(platform || '?').toUpperCase(),
+    color: '#666',
+    cssClass: '',
+  };
+}
+
+function normalizeBidForUi(bid) {
+  if (!bid) return null;
+  return { ...bid, platform: getPlatformObject(bid.platform) };
+}
+
+function normalizeCommentForUi(comment) {
+  if (!comment) return null;
+  return { ...comment, platform: getPlatformObject(comment.platform) };
+}
+
+function mergeSnapshotBids(...groups) {
+  const byId = new Map();
+
+  for (const group of groups) {
+    for (const rawBid of (group || [])) {
+      const bid = normalizeBidForUi(rawBid);
+      if (!bid || !bid.id) continue;
+      byId.set(bid.id, bid);
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
 // Safe DOM element builder
@@ -420,6 +457,25 @@ class AuctionState {
     this._totalBidCount++;
   }
 
+  hydrateSnapshot(bids, totalCount, platformCounts) {
+    this._allBids = bids.slice();
+    this._disregarded = new Set();
+    this._bidsByPlatform = {};
+    for (const p of PLATFORMS) this._bidsByPlatform[p.id] = 0;
+
+    if (platformCounts && typeof platformCounts === 'object') {
+      for (const [platformId, count] of Object.entries(platformCounts)) {
+        this._bidsByPlatform[platformId] = count;
+      }
+    } else {
+      for (const bid of this._allBids) {
+        this._bidsByPlatform[bid.platform.id] = (this._bidsByPlatform[bid.platform.id] || 0) + 1;
+      }
+    }
+
+    this._totalBidCount = Number.isFinite(totalCount) ? totalCount : this._allBids.length;
+  }
+
   disregardBid(bidId) {
     if (this._disregarded.has(bidId)) return false;
     const bid = this._allBids.find(b => b.id === bidId);
@@ -537,14 +593,20 @@ class DashboardRenderer {
   }
 
   addToFeed(bid) {
+    const entry = this._buildFeedEntry(bid);
     const emptyState = this._feedList.querySelector('.empty-state');
     if (emptyState) emptyState.remove();
+    this._feedList.insertBefore(entry, this._feedList.firstChild);
+    const entries = this._feedList.querySelectorAll('.feed-entry');
+    if (entries.length > 50) entries[entries.length - 1].remove();
+  }
 
+  _buildFeedEntry(bid) {
     const isHighest = this._state.getHighestBid()?.id === bid.id;
     const amountClass = 'feed-amount' + (isHighest ? ' highlight' : '');
     const entryClass = 'feed-entry' + (isHighest ? ' new-highest' : '');
 
-    const entry = el('div', { className: entryClass, 'data-bid-id': bid.id },
+    return el('div', { className: entryClass, 'data-bid-id': bid.id },
       el('span', { className: 'feed-platform-tag ' + bid.platform.cssClass }, bid.platform.shortName),
       el('span', { className: 'feed-username' + (bid.verified === false ? ' username-unverified' : '') }, '@' + bid.username),
       el('span', { className: amountClass }, formatCurrency(bid.amount)),
@@ -552,10 +614,20 @@ class DashboardRenderer {
       el('button', { className: 'feed-disregard-btn', 'data-bid-id': bid.id, title: 'Disregard this bid' }, '\u2715'),
       el('button', { className: 'block-user-btn small', 'data-platform': bid.platform.id, 'data-username': bid.username, title: 'Block user' }, '\u26D4')
     );
+  }
 
-    this._feedList.insertBefore(entry, this._feedList.firstChild);
-    const entries = this._feedList.querySelectorAll('.feed-entry');
-    if (entries.length > 50) entries[entries.length - 1].remove();
+  renderFeedSnapshot(bids) {
+    while (this._feedList.firstChild) this._feedList.removeChild(this._feedList.firstChild);
+
+    if (!bids.length) {
+      this._feedList.appendChild(el('div', { className: 'empty-state' }, 'Bids will appear here...'));
+      return;
+    }
+
+    const newestFirst = [...bids].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    for (const bid of newestFirst.slice(0, 50)) {
+      this._feedList.appendChild(this._buildFeedEntry(bid));
+    }
   }
 
   markFeedEntryDisregarded(bidId) {
@@ -749,11 +821,132 @@ function init() {
 
   let demoMode = false;
   let liveMode = false;
+  let paused = false;
+  let bufferedBids = [];
+  let bufferedComments = [];
+
+  const commentStreamList = document.getElementById('comment-stream-list');
+  const commentStreamCount = document.getElementById('comment-stream-count');
+  const commentStreamSection = document.getElementById('comment-stream-section');
+  let commentCount = 0;
+  const MAX_COMMENTS = 100;
+
+  function clearBufferedLiveData() {
+    bufferedBids = [];
+    bufferedComments = [];
+  }
+
+  function queueBufferedBid(bid) {
+    bufferedBids.push(normalizeBidForUi(bid));
+    if (bufferedBids.length > 250) bufferedBids.shift();
+  }
+
+  function queueBufferedComment(comment) {
+    bufferedComments.push(normalizeCommentForUi(comment));
+    if (bufferedComments.length > 250) bufferedComments.shift();
+  }
+
+  function resetCommentStream() {
+    commentCount = 0;
+    commentStreamCount.textContent = '0';
+    while (commentStreamList.firstChild) commentStreamList.removeChild(commentStreamList.firstChild);
+    commentStreamList.appendChild(el('div', { className: 'empty-state' }, 'Comments will appear here...'));
+  }
+
+  function renderComment(comment, options = {}) {
+    const normalizedComment = normalizeCommentForUi(comment);
+    if (!normalizedComment) return;
+
+    if (paused && !options.fromBuffer && !options.hydrating) {
+      queueBufferedComment(normalizedComment);
+      return;
+    }
+
+    const emptyState = commentStreamList.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+
+    commentCount++;
+    commentStreamCount.textContent = commentCount.toLocaleString();
+
+    const isBid = COMMENT_BID_HINT_RE.test(normalizedComment.text || '');
+    const platformObj = normalizedComment.platform;
+    const entryClass = 'comment-entry' + (isBid ? ' is-bid' : '');
+    const usernameClass = 'comment-username' + (normalizedComment.verified === false ? ' username-unverified' : '');
+
+    const entry = el('div', { className: entryClass },
+      el('span', { className: 'comment-platform-tag ' + (platformObj?.cssClass || '') }, platformObj?.shortName || '?'),
+      el('span', { className: usernameClass }, '@' + (normalizedComment.username || 'unknown')),
+      el('span', { className: 'comment-text' }, normalizedComment.text || ''),
+      el('span', { className: 'comment-time' }, formatTime(normalizedComment.timestamp || Date.now()))
+    );
+
+    commentStreamList.insertBefore(entry, commentStreamList.firstChild);
+
+    const entries = commentStreamList.querySelectorAll('.comment-entry');
+    if (entries.length > MAX_COMMENTS) entries[entries.length - 1].remove();
+  }
+
+  function hydrateCommentStream(comments) {
+    resetCommentStream();
+    for (const comment of (comments || [])) {
+      renderComment(comment, { hydrating: true });
+    }
+  }
+
+  function applyFilterSettings(filterSettings) {
+    if (!filterSettings) return;
+    if (filterSettings.minBid !== undefined) document.getElementById('filter-min').value = filterSettings.minBid;
+    if (filterSettings.maxBid !== undefined) document.getElementById('filter-max').value = filterSettings.maxBid;
+    if (filterSettings.jumpMultiplier !== undefined) document.getElementById('filter-jump').value = filterSettings.jumpMultiplier;
+  }
+
+  function hydrateFromStatus(snapshot) {
+    const snapshotBids = mergeSnapshotBids(snapshot.topBids, snapshot.recentBids);
+    const topBids = (snapshot.topBids || []).map(normalizeBidForUi);
+    const highestBid = normalizeBidForUi(snapshot.highestBid) || topBids[0] || state.getHighestBid();
+
+    state.hydrateSnapshot(snapshotBids, snapshot.bidCount, snapshot.platformCounts);
+    renderer.renderFeedSnapshot((snapshot.recentBids || []).map(normalizeBidForUi));
+    renderer.updateHeroBid(highestBid);
+    renderer.updateNextBids((topBids.length ? topBids : state.getTopBids(10)).slice(1, 4));
+    renderer.updateLeaderboard(topBids.length ? topBids : state.getTopBids(10));
+    renderer.updatePlatformCounts(snapshot.platformCounts || state.getBidsByPlatform());
+    renderer.updateTotalCount(Number.isFinite(snapshot.bidCount) ? snapshot.bidCount : state.getTotalCount());
+    connPanel.updateBlockedUsers(snapshot.blockedUsers || []);
+    applyFilterSettings(snapshot.filterSettings);
+    hydrateCommentStream(snapshot.recentComments || []);
+
+    if (snapshot.platforms) {
+      liveMode = Object.values(snapshot.platforms).some(Boolean);
+    }
+  }
+
+  function flushBufferedLiveData() {
+    const commentsToFlush = bufferedComments;
+    const bidsToFlush = bufferedBids;
+    clearBufferedLiveData();
+
+    for (const comment of commentsToFlush) {
+      renderComment(comment, { fromBuffer: true });
+    }
+
+    for (const bid of bidsToFlush) {
+      handleBid(bid, { fromBuffer: true });
+    }
+  }
 
   // ── Common bid handler ──
-  function handleBid(bid) {
-    state.addBid(bid);
-    renderer.addToFeed(bid);
+  function handleBid(bid, options = {}) {
+    const normalizedBid = normalizeBidForUi(bid);
+    if (!normalizedBid) return;
+
+    if (paused && !options.fromBuffer && !options.hydrating) {
+      queueBufferedBid(normalizedBid);
+      return;
+    }
+
+    state.addBid(normalizedBid);
+    renderer.addToFeed(normalizedBid);
     // Compute sorted active bids ONCE (not 3x)
     const activeBids = state.getActiveBids();
     renderer.updateHeroBid(activeBids.length > 0 ? activeBids[0] : null);
@@ -766,16 +959,16 @@ function init() {
   // ── Wire up simulator (demo mode) ──
   simulator.onBid(handleBid);
   // Wire simulator chat messages to the comment stream handler
-  simulator.onComment((comment) => {
-    if (wsClient._callbacks.comment) wsClient._callbacks.comment(comment);
-  });
+  simulator.onComment((comment) => renderComment(comment));
 
   // ── Wire up WebSocket (live mode) ──
   wsClient.onBid(handleBid);
 
   wsClient.onStatus((msg) => {
     connPanel.handleStatusMessage(msg);
-    if (msg.type === 'platform-connected') {
+    if (msg.type === 'status') {
+      hydrateFromStatus(msg);
+    } else if (msg.type === 'platform-connected') {
       liveMode = true;
       renderer.showToast(`${msg.platform} connected`, 'success');
       // Stop demo if running
@@ -799,13 +992,10 @@ function init() {
   });
 
   wsClient.onNewAuction(() => {
+    clearBufferedLiveData();
     state.reset();
     renderer.reset();
-    // Reset comment stream
-    commentCount = 0;
-    commentStreamCount.textContent = '0';
-    while (commentStreamList.firstChild) commentStreamList.removeChild(commentStreamList.firstChild);
-    commentStreamList.appendChild(el('div', { className: 'empty-state' }, 'Comments will appear here...'));
+    resetCommentStream();
     renderer.showToast('New auction started!', 'success');
   });
 
@@ -823,40 +1013,7 @@ function init() {
   });
 
   // ── Comment stream ──
-  const commentStreamList = document.getElementById('comment-stream-list');
-  const commentStreamCount = document.getElementById('comment-stream-count');
-  const commentStreamSection = document.getElementById('comment-stream-section');
-  let commentCount = 0;
-  const MAX_COMMENTS = 100;
-
-  wsClient.onComment((comment) => {
-    // Remove empty state
-    const emptyState = commentStreamList.querySelector('.empty-state');
-    if (emptyState) emptyState.remove();
-
-    commentCount++;
-    commentStreamCount.textContent = commentCount.toLocaleString();
-
-    // Check if this comment also parsed as a bid (for highlighting)
-    const isBid = /\d/.test(comment.text || '');
-
-    const platformObj = (typeof comment.platform === 'object') ? comment.platform : PLATFORM_MAP[comment.platform];
-    const entryClass = 'comment-entry' + (isBid ? ' is-bid' : '');
-    const usernameClass = 'comment-username' + (comment.verified === false ? ' username-unverified' : '');
-
-    const entry = el('div', { className: entryClass },
-      el('span', { className: 'comment-platform-tag ' + (platformObj?.cssClass || '') }, platformObj?.shortName || '?'),
-      el('span', { className: usernameClass }, '@' + (comment.username || 'unknown')),
-      el('span', { className: 'comment-text' }, comment.text || ''),
-      el('span', { className: 'comment-time' }, formatTime(comment.timestamp || Date.now()))
-    );
-
-    commentStreamList.insertBefore(entry, commentStreamList.firstChild);
-
-    // Cap at MAX_COMMENTS
-    const entries = commentStreamList.querySelectorAll('.comment-entry');
-    if (entries.length > MAX_COMMENTS) entries[entries.length - 1].remove();
-  });
+  wsClient.onComment((comment) => renderComment(comment));
 
   // ── Comment stream toggle ──
   const commentsBtn = document.getElementById('btn-comments');
@@ -1055,8 +1212,10 @@ function init() {
     if (liveMode) {
       wsClient.newAuction();
     } else {
+      clearBufferedLiveData();
       state.reset();
       renderer.reset();
+      resetCommentStream();
       if (demoMode) {
         simulator.reset();
         simulator.start();
@@ -1084,7 +1243,6 @@ function init() {
 
   // ── Pause / Resume ──
   const pauseBtn = document.getElementById('btn-pause');
-  let paused = false;
   pauseBtn.addEventListener('click', () => {
     paused = !paused;
     if (paused) {
@@ -1092,6 +1250,7 @@ function init() {
       pauseBtn.textContent = 'Resume';
     } else {
       if (demoMode) simulator.start();
+      flushBufferedLiveData();
       pauseBtn.textContent = 'Pause';
     }
   });
@@ -1099,8 +1258,10 @@ function init() {
   // ── Reset ──
   document.getElementById('btn-reset').addEventListener('click', () => {
     simulator.reset();
+    clearBufferedLiveData();
     state.reset();
     renderer.reset();
+    resetCommentStream();
     paused = false;
     pauseBtn.textContent = 'Pause';
     if (demoMode) simulator.start();

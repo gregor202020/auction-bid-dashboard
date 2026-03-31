@@ -218,7 +218,7 @@ Extracts bid amounts from comment text using multiple strategies:
 { type: 'user-blocked', platform: string, username: string, blockedUsers: Map }
 { type: 'user-unblocked', platform: string, username: string, blockedUsers: Map }
 { type: 'filter-updated', settings: { minBid, maxBid, jumpMultiplier } }
-{ type: 'status', platforms: {...}, bidCount: number, highestBid: Bid, ... }
+{ type: 'status', platforms: {...}, bidCount: number, highestBid: Bid, topBids: Bid[], recentBids: Bid[], recentComments: Comment[], ... }
 { type: 'fb-login-result' | 'fb-login-status' | 'fb-login-update', loggedIn: boolean, screenshot?: string, ... }
 ```
 
@@ -245,8 +245,8 @@ NODE_ENV=production                  # Default: development
 ```
 
 ### Startup Configuration
-- Load `.env` from parent directory (Social Media Analyser/.env)
-- Fallback to local `.env`
+- Load `.env` from this repo only
+- Environment variables can also be provided by the host process
 - Log warnings for missing API keys
 
 ## Deployment

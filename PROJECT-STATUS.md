@@ -1,235 +1,123 @@
-# Auction Bid Dashboard — Current Project Status
+# Auction Bid Dashboard - Current Project Status
 
 **Last Updated**: 2026-04-01
-**Status**: Production Ready ✅
+**Status**: Standalone and Regression-Tested
 **Repository**: https://github.com/gregor202020/auction-bid-dashboard
 
 ---
 
 ## Summary
 
-The Live Auction Bid Aggregator is **stable and ready for deployment**. All core features are functional, security testing is complete, and input validation has been hardened against edge cases.
+The extracted auction dashboard now runs as a true standalone repo.
+
+- Repo-local `.env` loading is in place
+- `.env.example` is minimal and app-specific
+- A runnable regression suite exists in `test/`
+- `npm audit` is clean after dependency updates
+- Local startup smoke testing passes on port `3069`
+
+Live credentialed end-to-end QA should still be rerun before treating a specific deployment as fully production-approved.
 
 ---
 
 ## Release Status
 
-### Version 1.0 (Current) — Production
+### Version 1.0 (Current)
+
 **Release Date**: 2026-04-01
-**Stability**: Stable ✅
+**Stability**: Functional; targeted live QA recommended
 
-**Features**:
-- ✅ Real-time bid aggregation from 4 platforms
-- ✅ WebSocket streaming to browsers
-- ✅ Multi-layer spam filtering
-- ✅ User blocklist management
-- ✅ Bid parsing with fallback strategies
-- ✅ Facebook login via Puppeteer
-- ✅ Demo mode for testing
-- ✅ REST API + WebSocket interface
-- ✅ DoS protection
-- ✅ Responsive dashboard
-
----
-
-## Testing Results (2026-04-01)
-
-### Phase 1: Smoke Test ✅
-**Result**: PASS (5/5)
-
-- [x] All modules import without errors
-- [x] Server starts on port 3069
-- [x] HTTP 200 response from GET /
-- [x] All required env vars documented
-- [x] No missing file dependencies
-
-### Phase 2: Static Analysis ✅
-**Result**: PASS (0 critical issues)
-
-- [x] No dead code found
-- [x] Import/export correctness verified
-- [x] Scope issues: 0
-- [x] Undeclared variables: 0
-- [x] Missing await on Promises: 0
-- [x] DoS protection in place
-
-**Removed Dead Code**:
-- Deleted unused `#bid-overlay` HTML div
-- Removed 220+ lines of unused CSS for overlay elements
-- Cleaned up stale duplicate files
-
-### Phase 3: Dynamic Testing ✅
-**Result**: PASS (64/64 tests)
-
-**Bid Parser Tests**: 56/56 ✅
-- All parsing strategies working (explicit, word, marker, plain number)
-- Boundary values handled correctly (reject 0, accept 5 and 999999)
-- Edge cases: null, undefined, NaN properly rejected
-
-**Spam Filter Tests**: 8/8 ✅
-- Blocked users rejected correctly
-- Threshold enforcement working
-- Duplicate detection within 10-second window
-- Valid bids accepted
-
-### Phase 4: Integration & Security ✅
-**Result**: PASS (12/12 checks)
-
-**Data Flow**:
-- [x] Comment flow: poller → manager → broadcast → client
-- [x] Platform naming consistent throughout ('youtube' → 'yt')
-- [x] No silent field renames or type mismatches
-
-**Input Validation**:
-- [x] All REST endpoints validate input
-- [x] WebSocket messages parsed safely
-- [x] fb-login-click coordinates validated (0-2000)
-- [x] No injection vulnerabilities
-
-**Security**:
-- [x] No credentials in client code
-- [x] Body size limits (4KB)
-- [x] WebSocket max payload (16KB)
-- [x] Safe static file serving (public/ only)
-
-### Phase 5: End-to-End Scenarios ✅
-**Result**: PASS (8/8 workflows)
-
-**Happy Paths**:
-1. [x] Connect platform → receive bids → display
-2. [x] Block user → no bids from that user
-3. [x] New auction → clear bids, keep connections
-4. [x] Filter changes → apply immediately
-
-**Error Paths**:
-1. [x] Invalid API key → error message, retry allowed
-2. [x] Missing credentials → warning, disabled
-3. [x] Bad JSON → error response
-4. [x] Non-bid comment → ignored
+**Core Features Present**:
+- Real-time bid aggregation from YouTube, Facebook, Instagram, and TikTok
+- WebSocket streaming to browsers
+- Multi-layer spam filtering
+- User blocklist management
+- Bid parsing for numeric and common word-form bids
+- Facebook login via Puppeteer
+- Demo mode for testing
+- REST API and WebSocket control surface
+- DoS protections on HTTP and WebSocket payloads
+- Responsive dashboard UI
 
 ---
 
-## Code Quality
+## Verification Results
 
-| Metric | Result | Status |
-|--------|--------|--------|
-| Cyclomatic Complexity | Max 12 | ✅ Good |
-| Dead Code | 0 | ✅ Clean |
-| Function Length | Max 45 lines | ✅ Good |
-| Test Coverage | 64/64 pass | ✅ Excellent |
-| Vulnerabilities | 0 | ✅ Secure |
+### Smoke Checks
+
+**Result**: PASS
+
+- All main modules parse successfully with `node --check`
+- Server boots successfully with `npm start`
+- Standalone repo-local `.env` loading verified
+- Minimal `.env.example` documented for this repo
+- No missing file dependencies after `npm install`
+
+### Automated Regression Suite
+
+**Result**: PASS (12/12 tests)
+
+- Bid parser: numeric and number-word bids
+- Spam filter: duplicate-window behavior
+- Auction manager: status snapshot data for reconnect hydration
+- Facebook scraper: conservative username matching for duplicate comment text
+
+### Runtime and Security Checks
+
+**Result**: PASS
+
+- Comment flow remains poller -> manager -> broadcast -> client
+- Reconnect snapshot includes recent bids, top bids, and recent comments
+- Standalone config no longer depends on parent repo files
+- REST endpoints validate required input
+- WebSocket messages are parsed safely
+- `fb-login-click` coordinates are validated
+- HTTP body limit is 4KB
+- WebSocket payload limit is 16KB
+- Static file serving is limited to `public/`
+- `npm audit` reports 0 vulnerabilities
 
 ---
 
 ## Known Limitations
 
-### Minor Issues (Non-Critical)
-
-1. **Facebook User Scraping**
-   - Relies on Puppeteer; may fail if Facebook changes UI
-   - Mitigation: Fallback to numeric ID display
-   - Status: Monitored
-
-2. **API Rate Limits**
-   - YouTube: 100 req/day (development key)
-   - TikTok: Uses reverse-engineered library
-   - Status: Acceptable for typical auctions
-
-3. **Comment Parsing**
-   - Regional formats (e.g., French) not recognized
-   - Mitigation: Confidence scoring for review
-   - Status: Acceptable
-
-4. **Verification Status**
-   - Limited on Instagram/TikTok
-   - Status: Informational only
+1. Facebook username scraping still depends on Facebook DOM structure and saved cookies.
+2. Platform integrations still require live credentials and live stream identifiers for full end-to-end verification.
+3. Comment parsing is tuned for common English auction phrasing and may miss regional or unusual formats.
+4. Instagram and TikTok verification metadata remains limited compared with YouTube.
 
 ---
 
 ## Performance
 
-### Benchmarks
-- Startup: ~500ms
-- Bid parse: <5ms avg
-- Spam filter: <1ms avg
-- WebSocket broadcast: <50ms for 100 clients
-- Memory: ~25MB baseline + 2MB per 1000 bids
-- CPU: <5% idle, <15% under heavy load
-
-### Scalability
-- Max concurrent clients: 500+
-- Max bids/minute: 5000+
-- Concurrent platform connections: 4 (stable)
+- Not rebenchmarked in this standalone repo after extraction.
+- Re-run load and performance testing before high-volume production use.
 
 ---
 
 ## Deployment
 
 ### Prerequisites
+
 - Node.js 18+
 - npm 8+
-- Port 3069 available
-- Internet access to platform APIs
+- Port `3069` available, or configure `AUCTION_PORT`
+- Valid platform credentials in local `.env`
 
 ### Setup
+
 ```bash
 npm install
 cp .env.example .env
-# Add API credentials
+# add real API credentials
 npm start
 ```
 
-### Production
-- Set NODE_ENV=production
-- Use reverse proxy (nginx)
-- Monitor error logs for 24 hours
+### Recommended Pre-Deploy Checks
 
----
-
-## Changes (2026-04-01)
-
-### Fixes
-1. ✅ Input validation for fb-login-click coordinates
-2. ✅ ReadyState check before WebSocket send
-3. ✅ DoS protection added
-
-### Cleanup
-1. ✅ Removed duplicate root files
-2. ✅ Removed unused overlay CSS
-3. ✅ Server initialization restructured
-
-### Documentation
-1. ✅ Created PROJECT-SPEC.md
-2. ✅ Created PROJECT-STATUS.md
-3. ✅ Extracted to standalone repo
-
----
-
-## Next Steps
-
-### Short Term
-- Monitor production deployment
-- Collect user feedback on parsing
-- Optimize Puppeteer startup
-
-### Medium Term (Phase 2)
-- Add bid history (PostgreSQL)
-- Analytics dashboard
-- Email alerts
-- Auctioneer role
-
-### Long Term (Phase 3)
-- ML prediction model
-- Multi-auction support
-- Seller dashboard
-- Payment integration
-
----
-
-## Sign-Off
-
-**Reviewed**: 2026-04-01
-**Confidence**: High
-**Ready for Production**: ✅ YES
-
-All testing complete. No blocking issues. Ready to deploy.
+```bash
+npm test
+npm audit
+node --check server.js
+node --check public/app.js
+```

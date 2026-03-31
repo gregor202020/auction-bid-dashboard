@@ -14,10 +14,8 @@ import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { AuctionManager } from './lib/auction-manager.js';
 
-// Load .env from parent directory (Social Media Analyser/.env)
+// Load config only from this repo's local .env.
 const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: join(__dirname, '..', '.env') });
-// Also try local .env
 dotenv.config({ path: join(__dirname, '.env') });
 
 const PORT = process.env.AUCTION_PORT || 3069;
