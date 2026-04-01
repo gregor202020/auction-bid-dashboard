@@ -1218,6 +1218,10 @@ function init() {
         // Update the screenshot in the popup
         const img = fbLoginWindow.document.getElementById('fb-screen');
         if (img) img.src = 'data:image/jpeg;base64,' + msg.screenshot;
+        if (msg.feedback) {
+          fbLoginStatus.textContent = msg.feedback;
+          fbLoginStatus.className = 'conn-hint status-warn';
+        }
       } else if (msg.cancelled) {
         closeFbLoginPopup({ settled: true });
         fbLoginBtn.textContent = 'Login to Facebook';
