@@ -33,13 +33,15 @@ const clients = new Set();
 
 // ── Initialize Auction Manager ────────────────────────────────
 const credentials = {
-  youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
+  youtubeApiKey: process.env.AUCTION_YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY || '',
   metaAccessToken: process.env.META_ACCESS_TOKEN || '',
   igUserId: process.env.INSTAGRAM_USER_ID || '',
   fbPageId: process.env.FACEBOOK_PAGE_ID || '',
 };
 
-if (!credentials.youtubeApiKey) console.warn('[WARN] YOUTUBE_API_KEY not set — YouTube integration disabled');
+if (!credentials.youtubeApiKey) {
+  console.warn('[WARN] AUCTION_YOUTUBE_API_KEY / YOUTUBE_API_KEY not set — YouTube integration disabled');
+}
 if (!credentials.metaAccessToken) console.warn('[WARN] META_ACCESS_TOKEN not set — Facebook/Instagram integration disabled');
 
 function broadcast(message) {

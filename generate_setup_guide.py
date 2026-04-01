@@ -319,7 +319,8 @@ story.append(Paragraph(
 ))
 story.append(code_block([
     "META_ACCESS_TOKEN=your_meta_token_here",
-    "YOUTUBE_API_KEY=your_youtube_api_key_here",
+    "AUCTION_YOUTUBE_API_KEY=your_dedicated_auction_youtube_api_key_here",
+    "# Optional fallback: YOUTUBE_API_KEY=your_shared_youtube_api_key_here",
     "TIKTOK_ACCESS_TOKEN=optional",
     "AUCTION_PORT=3069",
 ]))

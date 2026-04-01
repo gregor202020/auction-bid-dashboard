@@ -228,7 +228,9 @@ Extracts bid amounts from comment text using multiple strategies:
 
 **Required for YouTube**:
 ```
-YOUTUBE_API_KEY=YOUR_KEY
+AUCTION_YOUTUBE_API_KEY=YOUR_DEDICATED_AUCTION_KEY
+# Optional backward-compatible fallback:
+# YOUTUBE_API_KEY=YOUR_SHARED_KEY
 ```
 
 **Required for Facebook/Instagram**:
