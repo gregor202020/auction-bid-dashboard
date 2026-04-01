@@ -126,14 +126,42 @@ function normalizeCommentForUi(comment) {
   return { ...comment, platform: getPlatformObject(comment.platform) };
 }
 
+function getCommentKey(commentOrPlatform, commentId) {
+  if (!commentOrPlatform) return commentId || null;
+
+  if (typeof commentOrPlatform === 'object') {
+    const comment = commentOrPlatform;
+    const platformId = getPlatformObject(comment.platform || commentOrPlatform).id;
+    const id = comment.id ?? commentId;
+    return platformId && id ? `${platformId}:${id}` : id || null;
+  }
+
+  return commentId ? `${commentOrPlatform}:${commentId}` : String(commentOrPlatform);
+}
+
+function getBidKey(bidOrPlatform, bidId) {
+  if (!bidOrPlatform) return bidId || null;
+
+  if (typeof bidOrPlatform === 'object') {
+    const bid = bidOrPlatform;
+    const platformId = getPlatformObject(bid.platform || bidOrPlatform).id;
+    const id = bid.id ?? bidId;
+    return platformId && id ? `${platformId}:${id}` : id || null;
+  }
+
+  return bidId ? `${bidOrPlatform}:${bidId}` : String(bidOrPlatform);
+}
+
 function mergeSnapshotBids(...groups) {
   const byId = new Map();
 
   for (const group of groups) {
-    for (const rawBid of (group || [])) {
+    const items = Array.isArray(group) ? group : (group ? [group] : []);
+    for (const rawBid of items) {
       const bid = normalizeBidForUi(rawBid);
-      if (!bid || !bid.id) continue;
-      byId.set(bid.id, bid);
+      const bidKey = getBidKey(bid);
+      if (!bid || !bidKey) continue;
+      byId.set(bidKey, bid);
     }
   }
 
@@ -167,7 +195,7 @@ function el(tag, props, ...children) {
 class WebSocketClient {
   constructor() {
     this._ws = null;
-    this._callbacks = { bid: null, status: null, filtered: null, auction: null, blocked: null, error: null, comment: null, fbLogin: null };
+    this._callbacks = { bid: null, status: null, filtered: null, auction: null, blocked: null, error: null, comment: null, fbLogin: null, connection: null };
     this._reconnectTimer = null;
     this._connected = false;
   }
@@ -180,9 +208,10 @@ class WebSocketClient {
   onNewAuction(cb) { this._callbacks.auction = cb; }
   onBlockedUpdate(cb) { this._callbacks.blocked = cb; }
   onError(cb) { this._callbacks.error = cb; }
+  onConnectionChange(cb) { this._callbacks.connection = cb; }
 
   connect() {
-    if (this._ws) return;
+    if (this._ws) return true;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}`;
 
@@ -195,7 +224,12 @@ class WebSocketClient {
 
     this._ws.onopen = () => {
       this._connected = true;
+      if (this._reconnectTimer) {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+      }
       console.log('[WS] Connected to server');
+      this._emitConnectionState(true);
     };
 
     this._ws.onmessage = (event) => {
@@ -210,6 +244,7 @@ class WebSocketClient {
     this._ws.onclose = () => {
       this._connected = false;
       this._ws = null;
+      this._emitConnectionState(false);
       console.log('[WS] Disconnected — reconnecting in 3s...');
       this._reconnectTimer = setTimeout(() => this.connect(), 3000);
     };
@@ -223,14 +258,20 @@ class WebSocketClient {
 
   isConnected() { return this._connected; }
 
+  _emitConnectionState(connected) {
+    if (this._callbacks.connection) {
+      this._callbacks.connection({ connected });
+    }
+  }
+
   send(msg) {
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._ws.send(JSON.stringify(msg));
     }
   }
 
-  connectPlatform(platform, identifier) {
-    this.send({ type: 'connect-platform', platform, identifier });
+  connectPlatform(platform, identifier, originalIdentifier) {
+    this.send({ type: 'connect-platform', platform, identifier, originalIdentifier });
   }
 
   disconnectPlatform(platform) {
@@ -308,6 +349,7 @@ class WebSocketClient {
         break;
 
       case 'fb-login-result':
+      case 'fb-login-update':
       case 'fb-login-status':
         if (this._callbacks.fbLogin) this._callbacks.fbLogin(msg);
         break;
@@ -445,6 +487,7 @@ class BidSimulator {
 class AuctionState {
   constructor() {
     this._allBids = [];
+    this._bidKeys = new Set();
     this._disregarded = new Set();
     this._bidsByPlatform = {};
     for (const p of PLATFORMS) this._bidsByPlatform[p.id] = 0;
@@ -452,14 +495,32 @@ class AuctionState {
   }
 
   addBid(bid) {
-    this._allBids.push(bid);
-    this._bidsByPlatform[bid.platform.id] = (this._bidsByPlatform[bid.platform.id] || 0) + 1;
+    const bidKey = getBidKey(bid);
+    if (!bidKey || this._bidKeys.has(bidKey)) return false;
+
+    const normalizedBid = { ...bid, _bidKey: bidKey };
+    this._allBids.push(normalizedBid);
+    this._bidKeys.add(bidKey);
+    this._bidsByPlatform[normalizedBid.platform.id] = (this._bidsByPlatform[normalizedBid.platform.id] || 0) + 1;
     this._totalBidCount++;
+    return true;
   }
 
   hydrateSnapshot(bids, totalCount, platformCounts) {
-    this._allBids = bids.slice();
-    this._disregarded = new Set();
+    const preservedDisregarded = new Set(this._disregarded);
+    const uniqueBids = [];
+    const bidKeys = new Set();
+
+    for (const bid of bids) {
+      const bidKey = getBidKey(bid);
+      if (!bidKey || bidKeys.has(bidKey)) continue;
+      uniqueBids.push({ ...bid, _bidKey: bidKey });
+      bidKeys.add(bidKey);
+    }
+
+    this._allBids = uniqueBids;
+    this._bidKeys = bidKeys;
+    this._disregarded = new Set([...preservedDisregarded].filter((bidKey) => bidKeys.has(bidKey)));
     this._bidsByPlatform = {};
     for (const p of PLATFORMS) this._bidsByPlatform[p.id] = 0;
 
@@ -468,24 +529,26 @@ class AuctionState {
         this._bidsByPlatform[platformId] = count;
       }
     } else {
-      for (const bid of this._allBids) {
+      for (const bid of uniqueBids) {
         this._bidsByPlatform[bid.platform.id] = (this._bidsByPlatform[bid.platform.id] || 0) + 1;
       }
     }
 
-    this._totalBidCount = Number.isFinite(totalCount) ? totalCount : this._allBids.length;
+    this._totalBidCount = Number.isFinite(totalCount) ? totalCount : uniqueBids.length;
   }
 
   disregardBid(bidId) {
     if (this._disregarded.has(bidId)) return false;
-    const bid = this._allBids.find(b => b.id === bidId);
+    const bid = this.findBid(bidId);
     if (!bid) return false;
     this._disregarded.add(bidId);
     return true;
   }
 
   getActiveBids() {
-    return this._allBids.filter(b => !this._disregarded.has(b.id)).sort((a, b) => b.amount - a.amount);
+    return this._allBids
+      .filter((bid) => !this._disregarded.has(getBidKey(bid)))
+      .sort((a, b) => b.amount - a.amount || (a.timestamp || 0) - (b.timestamp || 0));
   }
 
   getHighestBid() {
@@ -498,9 +561,12 @@ class AuctionState {
   getBidsByPlatform() { return { ...this._bidsByPlatform }; }
   getTotalCount() { return this._totalBidCount; }
   isDisregarded(bidId) { return this._disregarded.has(bidId); }
+  getDisregardedKeys() { return [...this._disregarded]; }
+  findBid(bidId) { return this._allBids.find((bid) => getBidKey(bid) === bidId) || null; }
 
   reset() {
     this._allBids = [];
+    this._bidKeys = new Set();
     this._disregarded = new Set();
     for (const p of PLATFORMS) this._bidsByPlatform[p.id] = 0;
     this._totalBidCount = 0;
@@ -555,8 +621,9 @@ class DashboardRenderer {
       return;
     }
 
-    const isNewHighest = bid.id !== this._prevHighestId;
-    this._prevHighestId = bid.id;
+    const bidKey = getBidKey(bid);
+    const isNewHighest = bidKey !== this._prevHighestId;
+    this._prevHighestId = bidKey;
 
     this._heroAmount.textContent = formatCurrency(bid.amount);
     this._heroUsername.textContent = '@' + bid.username;
@@ -580,12 +647,12 @@ class DashboardRenderer {
     }
     nextBids.forEach((bid, i) => {
       const rank = i + 2;
-      const row = el('div', { className: 'next-bid-row', 'data-bid-id': bid.id },
+      const row = el('div', { className: 'next-bid-row', 'data-bid-id': getBidKey(bid) },
         el('span', { className: 'next-bid-rank rank-' + rank }, '#' + rank),
         el('span', { className: 'next-bid-platform ' + bid.platform.cssClass }, bid.platform.shortName),
         el('span', { className: 'next-bid-user' }, '@' + bid.username),
         el('span', { className: 'next-bid-amount' }, formatCurrency(bid.amount)),
-        el('button', { className: 'next-bid-disregard', 'data-bid-id': bid.id, title: 'Disregard this bid' }, 'Disregard'),
+        el('button', { className: 'next-bid-disregard', 'data-bid-id': getBidKey(bid), title: 'Disregard this bid' }, 'Disregard'),
         el('button', { className: 'block-user-btn', 'data-platform': bid.platform.id, 'data-username': bid.username, title: 'Block this user' }, 'Block')
       );
       this._nextBidsList.appendChild(row);
@@ -602,16 +669,16 @@ class DashboardRenderer {
   }
 
   _buildFeedEntry(bid) {
-    const isHighest = this._state.getHighestBid()?.id === bid.id;
+    const isHighest = getBidKey(this._state.getHighestBid()) === getBidKey(bid);
     const amountClass = 'feed-amount' + (isHighest ? ' highlight' : '');
     const entryClass = 'feed-entry' + (isHighest ? ' new-highest' : '');
 
-    return el('div', { className: entryClass, 'data-bid-id': bid.id },
+    return el('div', { className: entryClass, 'data-bid-id': getBidKey(bid) },
       el('span', { className: 'feed-platform-tag ' + bid.platform.cssClass }, bid.platform.shortName),
       el('span', { className: 'feed-username' + (bid.verified === false ? ' username-unverified' : '') }, '@' + bid.username),
       el('span', { className: amountClass }, formatCurrency(bid.amount)),
       el('span', { className: 'feed-time' }, formatTime(bid.timestamp)),
-      el('button', { className: 'feed-disregard-btn', 'data-bid-id': bid.id, title: 'Disregard this bid' }, '\u2715'),
+      el('button', { className: 'feed-disregard-btn', 'data-bid-id': getBidKey(bid), title: 'Disregard this bid' }, '\u2715'),
       el('button', { className: 'block-user-btn small', 'data-platform': bid.platform.id, 'data-username': bid.username, title: 'Block user' }, '\u26D4')
     );
   }
@@ -647,12 +714,12 @@ class DashboardRenderer {
     }
     topBids.forEach((bid, i) => {
       const rank = i + 1;
-      const row = el('div', { className: 'lb-row rank-' + rank, 'data-bid-id': bid.id },
+      const row = el('div', { className: 'lb-row rank-' + rank, 'data-bid-id': getBidKey(bid) },
         el('span', { className: 'lb-rank' }, String(rank)),
         el('span', { className: 'lb-platform-tag ' + bid.platform.cssClass }, bid.platform.shortName),
         el('span', { className: 'lb-username' }, '@' + bid.username),
         el('span', { className: 'lb-amount' }, formatCurrency(bid.amount)),
-        el('button', { className: 'lb-disregard-btn', 'data-bid-id': bid.id, title: 'Disregard this bid' }, '\u2715'),
+        el('button', { className: 'lb-disregard-btn', 'data-bid-id': getBidKey(bid), title: 'Disregard this bid' }, '\u2715'),
         el('button', { className: 'block-user-btn small', 'data-platform': bid.platform.id, 'data-username': bid.username, title: 'Block user' }, '\u26D4')
       );
       this._leaderboardList.appendChild(row);
@@ -726,11 +793,11 @@ class ConnectionPanelUI {
           btn.classList.remove('connected');
         } else {
           // Connect — auto-extract ID from full URLs
-          let val = input.value.trim();
-          if (!val) { input.focus(); return; }
-          val = extractPlatformId(id, val);
-          input.value = val; // show extracted ID in the input
-          this._ws.connectPlatform(cfg.apiName, val);
+          const rawVal = input.value.trim();
+          if (!rawVal) { input.focus(); return; }
+          const val = extractPlatformId(id, rawVal);
+          input.value = (id === 'fb' && /^https?:\/\//i.test(rawVal)) ? rawVal : val;
+          this._ws.connectPlatform(cfg.apiName, val, rawVal);
           btn.textContent = 'Connecting...';
           btn.disabled = true;
           setTimeout(() => { btn.disabled = false; }, 5000);
@@ -818,12 +885,19 @@ function init() {
   const simulator = new BidSimulator();
   const wsClient = new WebSocketClient();
   const connPanel = new ConnectionPanelUI(wsClient);
+  const demoBtn = document.getElementById('btn-demo');
+  const pauseBtn = document.getElementById('btn-pause');
 
   let demoMode = false;
+  let autoDemoMode = false;
   let liveMode = false;
   let paused = false;
   let bufferedBids = [];
   let bufferedComments = [];
+  let pendingPausedSnapshot = null;
+  let autoDemoTimer = null;
+  let fbLoginPopupMonitor = null;
+  let fbLoginPopupSettled = false;
 
   const commentStreamList = document.getElementById('comment-stream-list');
   const commentStreamCount = document.getElementById('comment-stream-count');
@@ -834,6 +908,48 @@ function init() {
   function clearBufferedLiveData() {
     bufferedBids = [];
     bufferedComments = [];
+  }
+
+  function clearAutoDemoFallback() {
+    if (autoDemoTimer) {
+      clearTimeout(autoDemoTimer);
+      autoDemoTimer = null;
+    }
+  }
+
+  function startDemo(options = {}) {
+    const { auto = false, reset = false } = options;
+    if (reset) simulator.reset();
+    if (!demoMode) simulator.start();
+    demoMode = true;
+    autoDemoMode = auto;
+    demoBtn.textContent = 'Stop Demo';
+  }
+
+  function stopDemo() {
+    if (!demoMode) return;
+    simulator.stop();
+    demoMode = false;
+    autoDemoMode = false;
+    demoBtn.textContent = 'Start Demo';
+  }
+
+  function scheduleAutoDemoFallback(delay = 3500) {
+    if (demoMode || wsClient.isConnected()) return;
+    if (autoDemoTimer) {
+      if (delay === 0) {
+        clearAutoDemoFallback();
+      } else {
+        return;
+      }
+    }
+
+    autoDemoTimer = setTimeout(() => {
+      autoDemoTimer = null;
+      if (!wsClient.isConnected() && !demoMode) {
+        startDemo({ auto: true });
+      }
+    }, delay);
   }
 
   function queueBufferedBid(bid) {
@@ -900,16 +1016,24 @@ function init() {
     if (filterSettings.jumpMultiplier !== undefined) document.getElementById('filter-jump').value = filterSettings.jumpMultiplier;
   }
 
-  function hydrateFromStatus(snapshot) {
-    const snapshotBids = mergeSnapshotBids(snapshot.topBids, snapshot.recentBids);
-    const topBids = (snapshot.topBids || []).map(normalizeBidForUi);
-    const highestBid = normalizeBidForUi(snapshot.highestBid) || topBids[0] || state.getHighestBid();
+  function hydrateFromStatus(snapshot, options = {}) {
+    if (paused && !options.fromResume) {
+      pendingPausedSnapshot = snapshot;
+      return;
+    }
+
+    pendingPausedSnapshot = null;
+    const snapshotBids = mergeSnapshotBids(snapshot.highestBid, snapshot.topBids, snapshot.recentBids);
+    const recentBids = ((snapshot.recentBids || []).map(normalizeBidForUi)).filter(Boolean);
 
     state.hydrateSnapshot(snapshotBids, snapshot.bidCount, snapshot.platformCounts);
-    renderer.renderFeedSnapshot((snapshot.recentBids || []).map(normalizeBidForUi));
-    renderer.updateHeroBid(highestBid);
-    renderer.updateNextBids((topBids.length ? topBids : state.getTopBids(10)).slice(1, 4));
-    renderer.updateLeaderboard(topBids.length ? topBids : state.getTopBids(10));
+    renderer.renderFeedSnapshot(recentBids);
+    for (const bidKey of state.getDisregardedKeys()) {
+      renderer.markFeedEntryDisregarded(bidKey);
+    }
+    renderer.updateHeroBid(state.getHighestBid());
+    renderer.updateNextBids(state.getNextBids());
+    renderer.updateLeaderboard(state.getTopBids(10));
     renderer.updatePlatformCounts(snapshot.platformCounts || state.getBidsByPlatform());
     renderer.updateTotalCount(Number.isFinite(snapshot.bidCount) ? snapshot.bidCount : state.getTotalCount());
     connPanel.updateBlockedUsers(snapshot.blockedUsers || []);
@@ -922,6 +1046,27 @@ function init() {
   }
 
   function flushBufferedLiveData() {
+    if (pendingPausedSnapshot) {
+      const snapshot = pendingPausedSnapshot;
+      const snapshotCommentKeys = new Set(
+        ((snapshot.recentComments || []).map(normalizeCommentForUi))
+          .filter(Boolean)
+          .map((comment) => getCommentKey(comment))
+          .filter(Boolean)
+      );
+      const commentsToFlush = bufferedComments.filter((comment) => !snapshotCommentKeys.has(getCommentKey(comment)));
+      const bidsToFlush = bufferedBids;
+      clearBufferedLiveData();
+      hydrateFromStatus(snapshot, { fromResume: true });
+      for (const comment of commentsToFlush) {
+        renderComment(comment, { fromBuffer: true });
+      }
+      for (const bid of bidsToFlush) {
+        handleBid(bid, { fromBuffer: true });
+      }
+      return;
+    }
+
     const commentsToFlush = bufferedComments;
     const bidsToFlush = bufferedBids;
     clearBufferedLiveData();
@@ -945,7 +1090,8 @@ function init() {
       return;
     }
 
-    state.addBid(normalizedBid);
+    const added = state.addBid(normalizedBid);
+    if (!added) return;
     renderer.addToFeed(normalizedBid);
     // Compute sorted active bids ONCE (not 3x)
     const activeBids = state.getActiveBids();
@@ -963,6 +1109,16 @@ function init() {
 
   // ── Wire up WebSocket (live mode) ──
   wsClient.onBid(handleBid);
+  wsClient.onConnectionChange(({ connected }) => {
+    if (connected) {
+      clearAutoDemoFallback();
+      if (autoDemoMode) stopDemo();
+      wsClient.fbLoginStatus();
+      return;
+    }
+
+    scheduleAutoDemoFallback();
+  });
 
   wsClient.onStatus((msg) => {
     connPanel.handleStatusMessage(msg);
@@ -972,11 +1128,7 @@ function init() {
       liveMode = true;
       renderer.showToast(`${msg.platform} connected`, 'success');
       // Stop demo if running
-      if (demoMode) {
-        simulator.stop();
-        demoMode = false;
-        document.getElementById('btn-demo').textContent = 'Start Demo';
-      }
+      if (demoMode) stopDemo();
     } else if (msg.type === 'platform-disconnected') {
       renderer.showToast(`${msg.platform} disconnected`, 'info');
     } else if (msg.type === 'platform-error') {
@@ -993,6 +1145,7 @@ function init() {
 
   wsClient.onNewAuction(() => {
     clearBufferedLiveData();
+    pendingPausedSnapshot = null;
     state.reset();
     renderer.reset();
     resetCommentStream();
@@ -1054,7 +1207,7 @@ function init() {
     } else if (msg.type === 'fb-login-update') {
       if (msg.loggedIn) {
         // Login successful!
-        if (fbLoginWindow && !fbLoginWindow.closed) fbLoginWindow.close();
+        closeFbLoginPopup({ settled: true });
         fbLoginBtn.textContent = 'Logged In';
         fbLoginBtn.classList.add('logged-in');
         fbLoginBtn.disabled = false;
@@ -1066,10 +1219,13 @@ function init() {
         const img = fbLoginWindow.document.getElementById('fb-screen');
         if (img) img.src = 'data:image/jpeg;base64,' + msg.screenshot;
       } else if (msg.cancelled) {
-        if (fbLoginWindow && !fbLoginWindow.closed) fbLoginWindow.close();
+        closeFbLoginPopup({ settled: true });
         fbLoginBtn.textContent = 'Login to Facebook';
         fbLoginBtn.disabled = false;
       } else if (msg.error) {
+        closeFbLoginPopup({ settled: true });
+        fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.disabled = false;
         renderer.showToast('FB login error: ' + msg.error, 'error');
       }
     } else if (msg.type === 'fb-login-status') {
@@ -1089,9 +1245,13 @@ function init() {
   function openFbLoginPopup(screenshotBase64) {
     fbLoginWindow = window.open('', 'FBLogin', 'width=820,height=640,resizable=yes,scrollbars=no');
     if (!fbLoginWindow) {
+      wsClient.send({ type: 'fb-login-cancel' });
+      fbLoginBtn.textContent = 'Login to Facebook';
+      fbLoginBtn.disabled = false;
       renderer.showToast('Popup blocked — allow popups for this site', 'error');
       return;
     }
+    fbLoginPopupSettled = false;
     const doc = fbLoginWindow.document;
     doc.title = 'Facebook Login';
     doc.body.style.cssText = 'margin:0;padding:0;background:#1a1a2e;display:flex;flex-direction:column;height:100vh;font-family:system-ui;';
@@ -1104,7 +1264,13 @@ function init() {
     const cancelBtn = doc.createElement('button');
     cancelBtn.textContent = 'Cancel';
     cancelBtn.style.cssText = 'background:rgba(255,255,255,0.2);border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;';
-    cancelBtn.onclick = () => { wsClient.send({ type: 'fb-login-cancel' }); fbLoginWindow.close(); fbLoginBtn.textContent = 'Login to Facebook'; fbLoginBtn.disabled = false; };
+    cancelBtn.onclick = () => {
+      fbLoginPopupSettled = true;
+      wsClient.send({ type: 'fb-login-cancel' });
+      closeFbLoginPopup({ settled: true });
+      fbLoginBtn.textContent = 'Login to Facebook';
+      fbLoginBtn.disabled = false;
+    };
     header.appendChild(title);
     header.appendChild(cancelBtn);
     doc.body.appendChild(header);
@@ -1143,6 +1309,33 @@ function init() {
     const pulseStyle = doc.createElement('style');
     pulseStyle.textContent = '@keyframes pulse-border { 0%,100% { border-color: #1877F2; } 50% { border-color: #ff6b35; } } #fb-screen { border: 3px solid #1877F2; animation: pulse-border 2s infinite; }';
     doc.head.appendChild(pulseStyle);
+
+    if (fbLoginPopupMonitor) clearInterval(fbLoginPopupMonitor);
+    fbLoginPopupMonitor = setInterval(() => {
+      if (!fbLoginWindow || !fbLoginWindow.closed) return;
+      clearInterval(fbLoginPopupMonitor);
+      fbLoginPopupMonitor = null;
+      fbLoginWindow = null;
+      if (!fbLoginPopupSettled) {
+        fbLoginPopupSettled = true;
+        wsClient.send({ type: 'fb-login-cancel' });
+        fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.disabled = false;
+      }
+    }, 500);
+  }
+
+  function closeFbLoginPopup(options = {}) {
+    const { settled = false } = options;
+    fbLoginPopupSettled = settled || fbLoginPopupSettled;
+    if (fbLoginPopupMonitor) {
+      clearInterval(fbLoginPopupMonitor);
+      fbLoginPopupMonitor = null;
+    }
+    if (fbLoginWindow && !fbLoginWindow.closed) {
+      fbLoginWindow.close();
+    }
+    fbLoginWindow = null;
   }
 
   // Try to connect WebSocket
@@ -1152,7 +1345,11 @@ function init() {
   connPanel.init();
 
   // Request FB login status on connect
-  setTimeout(() => { wsClient.fbLoginStatus(); }, 1000);
+  if (!wsConnected) {
+    scheduleAutoDemoFallback(0);
+  } else {
+    scheduleAutoDemoFallback();
+  }
 
   // ── Disregard + Block handler — event delegation ──
   document.body.addEventListener('click', (e) => {
@@ -1162,7 +1359,7 @@ function init() {
         disregardBtn.classList.contains('lb-disregard-btn') ||
         disregardBtn.classList.contains('next-bid-disregard'))) {
       const bidId = disregardBtn.dataset.bidId;
-      const bid = state._allBids.find(b => b.id === bidId);
+      const bid = state.findBid(bidId);
       if (!bid || state.isDisregarded(bidId)) return;
 
       state.disregardBid(bidId);
@@ -1209,16 +1406,16 @@ function init() {
 
   document.getElementById('confirm-yes').addEventListener('click', () => {
     confirmOverlay.classList.add('hidden');
-    if (liveMode) {
+    if (!demoMode && wsClient.isConnected()) {
       wsClient.newAuction();
     } else {
       clearBufferedLiveData();
+      pendingPausedSnapshot = null;
       state.reset();
       renderer.reset();
       resetCommentStream();
       if (demoMode) {
-        simulator.reset();
-        simulator.start();
+        startDemo({ auto: false, reset: true });
       }
       renderer.showToast('New auction started!', 'success');
     }
@@ -1229,20 +1426,16 @@ function init() {
   });
 
   // ── Demo mode toggle ──
-  document.getElementById('btn-demo').addEventListener('click', () => {
+  demoBtn.addEventListener('click', () => {
     if (demoMode) {
-      simulator.stop();
-      demoMode = false;
-      document.getElementById('btn-demo').textContent = 'Start Demo';
+      stopDemo();
     } else {
-      simulator.start();
-      demoMode = true;
-      document.getElementById('btn-demo').textContent = 'Stop Demo';
+      clearAutoDemoFallback();
+      startDemo({ auto: false });
     }
   });
 
   // ── Pause / Resume ──
-  const pauseBtn = document.getElementById('btn-pause');
   pauseBtn.addEventListener('click', () => {
     paused = !paused;
     if (paused) {
@@ -1263,6 +1456,7 @@ function init() {
     renderer.reset();
     resetCommentStream();
     paused = false;
+    pendingPausedSnapshot = null;
     pauseBtn.textContent = 'Pause';
     if (demoMode) simulator.start();
   });
@@ -1419,9 +1613,7 @@ function init() {
 
   // If no WebSocket (opened as file://), start demo by default
   if (!wsConnected) {
-    simulator.start();
-    demoMode = true;
-    document.getElementById('btn-demo').textContent = 'Stop Demo';
+    startDemo({ auto: true });
   }
 }
 

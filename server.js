@@ -96,7 +96,7 @@ function safeSend(ws, data) {
 function handleClientMessage(ws, msg) {
   switch (msg.type) {
     case 'connect-platform':
-      manager.connect(msg.platform, msg.identifier).then(result => {
+      manager.connect(msg.platform, msg.identifier, msg.originalIdentifier).then(result => {
         safeSend(ws, { type: 'connect-result', platform: msg.platform, ...result });
       }).catch(err => {
         safeSend(ws, { type: 'connect-result', platform: msg.platform, success: false, error: err.message });
@@ -199,11 +199,11 @@ function handleClientMessage(ws, msg) {
 
 // ── REST API (alternative to WebSocket messages) ──────────────
 app.post('/api/connect', async (req, res) => {
-  const { platform, identifier } = req.body;
+  const { platform, identifier, originalIdentifier } = req.body;
   if (!platform || !identifier) {
     return res.status(400).json({ error: 'platform and identifier are required' });
   }
-  const result = await manager.connect(platform, identifier);
+  const result = await manager.connect(platform, identifier, originalIdentifier);
   res.json(result);
 });
 

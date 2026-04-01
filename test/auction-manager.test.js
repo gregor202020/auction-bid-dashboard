@@ -46,3 +46,26 @@ test('newAuction clears bid and comment snapshots', () => {
   assert.equal(status.recentBids.length, 0);
   assert.equal(status.recentComments.length, 0);
 });
+
+test('top bid snapshot preserves older winners beyond the recent bid buffer', () => {
+  const manager = createManager();
+
+  manager._handleComment({ id: 'winner', platform: 'yt', username: 'alice', text: '9000', timestamp: 1 });
+
+  for (let i = 0; i < 300; i++) {
+    manager._handleComment({
+      id: `c${i}`,
+      platform: 'fb',
+      username: `user${i}`,
+      text: String(100 + i),
+      timestamp: i + 10,
+    });
+  }
+
+  const status = manager.getStatus();
+
+  assert.equal(status.recentBids.length, 50);
+  assert.equal(status.highestBid.amount, 9000);
+  assert.equal(status.topBids[0].amount, 9000);
+  assert.equal(status.topBids[0].id, 'winner');
+});

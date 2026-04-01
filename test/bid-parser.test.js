@@ -28,3 +28,23 @@ test('rejects comments with no numeric hints', () => {
 test('rejects year-like plain comments without bid context', () => {
   assert.equal(parseBid('2026'), null);
 });
+
+test('rejects number words used as chatter instead of bids', () => {
+  assert.equal(parseBid('one hundred percent'), null);
+  assert.equal(parseBid('five stars'), null);
+});
+
+test('rejects numeric chatter with non-bid suffixes', () => {
+  assert.equal(parseBid('thanks for 5k likes'), null);
+});
+
+test('rejects negotiation chatter that is not a committed bid', () => {
+  assert.equal(parseBid('can you do 500?'), null);
+  assert.equal(parseBid('do 500 shipped?'), null);
+});
+
+test('still accepts standalone suffix bids', () => {
+  const parsed = parseBid('5k');
+  assert.ok(parsed);
+  assert.equal(parsed.amount, 5000);
+});
