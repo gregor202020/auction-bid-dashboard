@@ -298,6 +298,10 @@ class WebSocketClient {
     this.send({ type: 'fb-login' });
   }
 
+  fbLoginScreenshot() {
+    this.send({ type: 'fb-login-screenshot' });
+  }
+
   fbLoginStatus() {
     this.send({ type: 'fb-login-status' });
   }
@@ -898,6 +902,7 @@ function init() {
   let autoDemoTimer = null;
   let fbLoginPopupMonitor = null;
   let fbLoginPopupSettled = false;
+  let fbLoginRefreshTimer = null;
 
   const commentStreamList = document.getElementById('comment-stream-list');
   const commentStreamCount = document.getElementById('comment-stream-count');
@@ -1132,9 +1137,9 @@ function init() {
     } else if (msg.type === 'platform-disconnected') {
       renderer.showToast(`${msg.platform} disconnected`, 'info');
     } else if (msg.type === 'platform-error') {
-      renderer.showToast(`${msg.platform}: ${msg.error}`, 'error');
+      showPlatformErrorToast(msg.platform, msg.error);
     } else if (msg.type === 'connect-result' && !msg.success) {
-      renderer.showToast(`${msg.platform}: ${msg.error}`, 'error');
+      showPlatformErrorToast(msg.platform, msg.error);
     }
   });
 
@@ -1178,12 +1183,23 @@ function init() {
   // ── Facebook login ──
   const fbLoginBtn = document.getElementById('btn-fb-login');
   const fbLoginStatus = document.getElementById('fb-login-status');
+  const recentPlatformErrors = new Map();
+
+  function showPlatformErrorToast(platform, error) {
+    const key = `${platform}:${error}`;
+    const now = Date.now();
+    const lastShownAt = recentPlatformErrors.get(key) || 0;
+    if (now - lastShownAt < 1500) return;
+    recentPlatformErrors.set(key, now);
+    renderer.showToast(`${platform}: ${error}`, 'error');
+  }
 
   // ── Facebook Remote Login (streamed headless browser) ──
   let fbLoginWindow = null;
 
   fbLoginBtn.addEventListener('click', () => {
     fbLoginBtn.textContent = 'Starting...';
+    fbLoginBtn.classList.remove('logged-in');
     fbLoginBtn.disabled = true;
     wsClient.send({ type: 'fb-login' });
   });
@@ -1200,6 +1216,7 @@ function init() {
         fbLoginBtn.textContent = 'Logging in...';
       } else {
         fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.classList.remove('logged-in');
         fbLoginStatus.textContent = 'Login failed: ' + (msg.error || 'unknown');
         fbLoginStatus.className = 'conn-hint status-warn';
         renderer.showToast('FB login failed: ' + (msg.error || ''), 'error');
@@ -1225,10 +1242,12 @@ function init() {
       } else if (msg.cancelled) {
         closeFbLoginPopup({ settled: true });
         fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.classList.remove('logged-in');
         fbLoginBtn.disabled = false;
       } else if (msg.error) {
         closeFbLoginPopup({ settled: true });
         fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.classList.remove('logged-in');
         fbLoginBtn.disabled = false;
         renderer.showToast('FB login error: ' + msg.error, 'error');
       }
@@ -1240,6 +1259,7 @@ function init() {
         fbLoginStatus.className = 'conn-hint status-ok';
       } else {
         fbLoginBtn.textContent = 'Login to Facebook';
+        fbLoginBtn.classList.remove('logged-in');
         fbLoginStatus.textContent = 'Not logged in — Facebook bids will show as "Unverified"';
         fbLoginStatus.className = 'conn-hint status-warn';
       }
@@ -1327,11 +1347,21 @@ function init() {
         fbLoginBtn.disabled = false;
       }
     }, 500);
+
+    if (fbLoginRefreshTimer) clearInterval(fbLoginRefreshTimer);
+    fbLoginRefreshTimer = setInterval(() => {
+      if (!fbLoginWindow || fbLoginWindow.closed || fbLoginPopupSettled) return;
+      wsClient.fbLoginScreenshot();
+    }, 1500);
   }
 
   function closeFbLoginPopup(options = {}) {
     const { settled = false } = options;
     fbLoginPopupSettled = settled || fbLoginPopupSettled;
+    if (fbLoginRefreshTimer) {
+      clearInterval(fbLoginRefreshTimer);
+      fbLoginRefreshTimer = null;
+    }
     if (fbLoginPopupMonitor) {
       clearInterval(fbLoginPopupMonitor);
       fbLoginPopupMonitor = null;

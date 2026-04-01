@@ -182,6 +182,17 @@ function handleClientMessage(ws, msg) {
       });
       break;
 
+    case 'fb-login-screenshot':
+      manager.fbLoginScreenshot().then(result => {
+        safeSend(ws, { type: 'fb-login-update', ...result });
+        if (result.loggedIn) {
+          broadcast({ type: 'fb-login-status', loggedIn: true });
+        }
+      }).catch(err => {
+        safeSend(ws, { type: 'fb-login-update', error: err.message });
+      });
+      break;
+
     case 'fb-login-cancel':
       manager.fbLoginCancel().then(() => {
         safeSend(ws, { type: 'fb-login-update', cancelled: true });
