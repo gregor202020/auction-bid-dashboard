@@ -20,3 +20,19 @@ test('selectActiveInstagramLiveMedia returns null for non-live reels and posts',
 
   assert.equal(result, null);
 });
+
+test('selectActiveInstagramLiveMedia accepts live_media broadcasts returned as BROADCAST/FEED', () => {
+  const result = selectActiveInstagramLiveMedia([
+    {
+      id: 'story-live-1',
+      _source: 'live_edge',
+      media_type: 'BROADCAST',
+      media_product_type: 'FEED',
+      permalink: 'https://www.instagram.com/stories/thirdwavebbq/3866112541420831836',
+      timestamp: '2026-04-02T02:22:31+0000',
+    },
+    { id: 'reel-1', media_product_type: 'REELS', timestamp: '2026-04-02T01:44:12+0000' },
+  ]);
+
+  assert.equal(result?.id, 'story-live-1');
+});

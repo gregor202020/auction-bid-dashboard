@@ -1207,7 +1207,19 @@ function init() {
   wsClient.onFbLogin((msg) => {
     if (msg.type === 'fb-login-result') {
       fbLoginBtn.disabled = false;
-      if (msg.success && msg.screenshot) {
+      if (msg.success && msg.loggedIn) {
+        closeFbLoginPopup({ settled: true });
+        fbLoginBtn.textContent = 'Logged In';
+        fbLoginBtn.classList.add('logged-in');
+        fbLoginStatus.textContent = msg.reusedSession
+          ? 'Session already active — usernames will be scraped automatically'
+          : 'Logged in — usernames will be scraped automatically';
+        fbLoginStatus.className = 'conn-hint status-ok';
+        renderer.showToast(
+          msg.reusedSession ? 'Facebook session already active' : 'Facebook login successful!',
+          'success'
+        );
+      } else if (msg.success && msg.screenshot) {
         // Login page loaded — open popup with the screenshot
         fbLoginBtn.textContent = 'Logging in...';
         openFbLoginPopup(msg.screenshot);
