@@ -20,6 +20,13 @@ dotenv.config({ path: join(__dirname, '.env') });
 
 const PORT = process.env.AUCTION_PORT || 3069;
 
+function parseCsvKeys(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 // ── Express setup ─────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '4kb' })); // Limit body size to prevent DoS
@@ -33,16 +40,34 @@ const clients = new Set();
 
 // ── Initialize Auction Manager ────────────────────────────────
 const credentials = {
+  youtubeApiKeys: (() => {
+    const primary = process.env.AUCTION_YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY || '';
+    const extras = [
+      process.env.YOUTUBE_API_KEY || '',
+      ...parseCsvKeys(process.env.AUCTION_YOUTUBE_API_KEYS || ''),
+      ...parseCsvKeys(process.env.YOUTUBE_API_KEYS || ''),
+    ];
+    return [...new Set([primary, ...extras].filter(Boolean))];
+  })(),
   youtubeApiKey: process.env.AUCTION_YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY || '',
   metaAccessToken: process.env.META_ACCESS_TOKEN || '',
   igUserId: process.env.INSTAGRAM_USER_ID || '',
   fbPageId: process.env.FACEBOOK_PAGE_ID || '',
 };
+if (!credentials.youtubeApiKey && credentials.youtubeApiKeys.length > 0) {
+  credentials.youtubeApiKey = credentials.youtubeApiKeys[0];
+}
 
 if (!credentials.youtubeApiKey) {
   console.warn('[WARN] AUCTION_YOUTUBE_API_KEY / YOUTUBE_API_KEY not set — YouTube integration disabled');
 }
-if (!credentials.metaAccessToken) console.warn('[WARN] META_ACCESS_TOKEN not set — Facebook/Instagram integration disabled');
+if (credentials.youtubeApiKeys.length > 1) {
+  console.log(`[INFO] Loaded ${credentials.youtubeApiKeys.length} YouTube API keys for quota failover.`);
+}
+if (!credentials.metaAccessToken) {
+  console.warn('[WARN] META_ACCESS_TOKEN not set â€” Facebook/Instagram integration disabled');
+}
+
 
 function broadcast(message) {
   const payload = JSON.stringify(message);
