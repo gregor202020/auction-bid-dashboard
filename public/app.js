@@ -1312,15 +1312,26 @@ function init() {
       wsClient.send({ type: 'fb-login-click', x, y });
     });
 
+    const handleWheel = (e) => {
+      e.preventDefault();
+      wsClient.send({
+        type: 'fb-login-wheel',
+        deltaX: Math.round(e.deltaX || 0),
+        deltaY: Math.round(e.deltaY || 0),
+      });
+    };
+    img.addEventListener('wheel', handleWheel, { passive: false });
+    doc.addEventListener('wheel', handleWheel, { passive: false });
+
     doc.body.appendChild(img);
 
     // Keyboard handler — send typing to server
     doc.addEventListener('keydown', (e) => {
       e.preventDefault();
-      if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Backspace' || e.key === 'Escape') {
-        wsClient.send({ type: 'fb-login-key', key: e.key });
-      } else if (e.key.length === 1) {
+      if (e.key.length === 1) {
         wsClient.send({ type: 'fb-login-type', text: e.key });
+      } else {
+        wsClient.send({ type: 'fb-login-key', key: e.key });
       }
     });
 

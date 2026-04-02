@@ -184,6 +184,24 @@ function handleClientMessage(ws, msg) {
       });
       break;
 
+    case 'fb-login-wheel': {
+      const deltaX = Number(msg.deltaX) || 0;
+      const deltaY = Number(msg.deltaY) || 0;
+      if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || Math.abs(deltaX) > 5000 || Math.abs(deltaY) > 5000) {
+        safeSend(ws, { type: 'fb-login-update', error: 'Invalid scroll request' });
+        break;
+      }
+      manager.fbLoginWheel(deltaX, deltaY).then(result => {
+        safeSend(ws, { type: 'fb-login-update', ...result });
+        if (result.loggedIn) {
+          broadcast({ type: 'fb-login-status', loggedIn: true });
+        }
+      }).catch(err => {
+        safeSend(ws, { type: 'fb-login-update', error: err.message });
+      });
+      break;
+    }
+
     case 'fb-login-screenshot':
       manager.fbLoginScreenshot().then(result => {
         safeSend(ws, { type: 'fb-login-update', ...result });
