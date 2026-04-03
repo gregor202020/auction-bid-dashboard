@@ -69,3 +69,24 @@ test('top bid snapshot preserves older winners beyond the recent bid buffer', ()
   assert.equal(status.topBids[0].amount, 9000);
   assert.equal(status.topBids[0].id, 'winner');
 });
+
+test('facebook preflight rejects missing identifiers', async () => {
+  const manager = createManager();
+  const result = await manager.fbPreflight('', '');
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /required/i);
+});
+
+test('facebook connect is blocked when preflight fails', async () => {
+  const manager = createManager();
+  manager.fbPreflight = async () => ({
+    ok: false,
+    error: 'Facebook session expired. Re-login required.',
+  });
+
+  const result = await manager.connect('facebook', '958709113270294');
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /Re-login required/i);
+});

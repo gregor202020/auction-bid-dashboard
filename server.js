@@ -300,6 +300,15 @@ app.get('/api/status', (req, res) => {
   res.json(manager.getStatus());
 });
 
+app.post('/api/facebook/preflight', async (req, res) => {
+  const { identifier, originalIdentifier } = req.body || {};
+  const result = await manager.fbPreflight(identifier, originalIdentifier);
+  if (result.ok) {
+    return res.json({ success: true, ...result });
+  }
+  return res.status(409).json({ success: false, ...result });
+});
+
 // ── Start server ──────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log('');

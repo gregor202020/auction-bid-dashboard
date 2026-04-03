@@ -764,10 +764,41 @@ class DashboardRenderer {
 // ============================================================
 
 class ConnectionPanelUI {
-  constructor(wsClient) {
+  constructor(wsClient, notify = () => {}) {
     this._ws = wsClient;
+    this._notify = notify;
     this._panel = document.getElementById('connection-panel');
     this._platformStatus = { yt: false, fb: false, ig: false, tt: false };
+  }
+
+  async _runFacebookPreflight(identifier, originalIdentifier) {
+    try {
+      const res = await fetch('/api/facebook/preflight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier, originalIdentifier }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.success) {
+        return {
+          success: false,
+          error: payload.error || 'Facebook session preflight failed.',
+        };
+      }
+      return { success: true, ...payload };
+    } catch (err) {
+      return {
+        success: false,
+        error: `Facebook preflight request failed: ${err.message}`,
+      };
+    }
+  }
+
+  _setFacebookLoginHint(message, ok = false) {
+    const statusNode = document.getElementById('fb-login-status');
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.className = 'conn-hint ' + (ok ? 'status-ok' : 'status-warn');
   }
 
   init() {
@@ -788,7 +819,7 @@ class ConnectionPanelUI {
       const btn = document.getElementById(cfg.btn);
       const input = document.getElementById(cfg.input);
 
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         if (this._platformStatus[id]) {
           // Disconnect
           this._ws.disconnectPlatform(cfg.apiName);
@@ -801,6 +832,20 @@ class ConnectionPanelUI {
           if (!rawVal) { input.focus(); return; }
           const val = extractPlatformId(id, rawVal);
           input.value = (id === 'fb' && /^https?:\/\//i.test(rawVal)) ? rawVal : val;
+          if (id === 'fb') {
+            btn.textContent = 'Preflight...';
+            btn.disabled = true;
+
+            const preflight = await this._runFacebookPreflight(val, rawVal);
+            if (!preflight.success) {
+              this._setStatus('fb', false);
+              this._setFacebookLoginHint(preflight.error || 'Facebook login required before connect.');
+              this._notify(`Facebook preflight failed: ${preflight.error || 'unknown error'}`, 'error');
+              return;
+            }
+
+            this._setFacebookLoginHint('Session verified for this stream — connecting...', true);
+          }
           this._ws.connectPlatform(cfg.apiName, val, rawVal);
           btn.textContent = 'Connecting...';
           btn.disabled = true;
@@ -888,7 +933,7 @@ function init() {
   const renderer = new DashboardRenderer(state);
   const simulator = new BidSimulator();
   const wsClient = new WebSocketClient();
-  const connPanel = new ConnectionPanelUI(wsClient);
+  const connPanel = new ConnectionPanelUI(wsClient, (message, type = 'info') => renderer.showToast(message, type));
   const demoBtn = document.getElementById('btn-demo');
   const pauseBtn = document.getElementById('btn-pause');
 
